@@ -1,4 +1,13 @@
 const express = require('express');
+const cors = require('cors'); // This is the line that needs the package above
+const app = express();
+
+app.use(cors()); // This allows Replit to talk to Render
+app.use(express.json());
+
+// ... the rest of your code (checkAuth, app.post, etc.) ...
+
+const express = require('express');
 const cors = require('cors'); // Requires: npm install cors
 const app = express();
 
