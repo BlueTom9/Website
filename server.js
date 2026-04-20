@@ -37,5 +37,5 @@ app.get('/profile/:id', (req, res) => {
   res.json(data);
 });
 
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("API running on port", PORT));
