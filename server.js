@@ -1,10 +1,18 @@
 const express = require('express');
-const cors = require('cors'); // Requires: npm install cors
+const cors = require('cors');
+const { Pool } = require('pg'); // Requires: npm install pg
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
+// Set up connection to your Replit PostgreSQL
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false } // Required for most hosted DBs
+});
+
+// Middleware to protect your update route
 function checkAuth(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth || auth !== process.env.API_SECRET) {
@@ -13,52 +21,69 @@ function checkAuth(req, res, next) {
   next();
 }
 
-const profiles = {};
+// Keep-alive route for UptimeRobot
+app.get('/health', (req, res) => res.send('Server is running'));
 
-app.post('/update-profile', checkAuth, (req, res) => {
+/**
+ * Update Profile
+ * This still exists so your Bot can push data, 
+ * but now we save it to the DB so it never disappears.
+ */
+app.post('/update-profile', checkAuth, async (req, res) => {
   const { userId, username, mode, ot, jt } = req.body;
 
   if (!userId || !mode || !ot) {
-    return res.status(400).json({ error: "Missing required fields" });
+    return res.status(400).json({ error: "Missing fields" });
   }
 
-  if (!profiles[userId]) {
-    profiles[userId] = { username: username || userId, modes: {} };
+  try {
+    await db.query(
+      `INSERT INTO profiles (user_id, username, mode, ot, jt, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (user_id, mode)
+       DO UPDATE SET username=$2, ot=$4, jt=$5, updated_at=NOW()`,
+      [userId, username, mode, ot, jt]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error("DB Error:", err);
+    res.status(500).json({ error: "Database save failed" });
   }
-
-  profiles[userId].username = username || profiles[userId].username;
-  profiles[userId].modes[mode] = { ot, jt, updatedAt: Date.now() };
-
-  return res.json({ success: true });
 });
 
-// Converts the raw profiles into the Tier List format for the website
-app.get('/tiers', (req, res) => {
-  const tiers = {};
-  const OT_ORDER = ['S', 'A', 'B', 'C', 'D'];
+/**
+ * Get Tiers
+ * This fetches fresh data from the Database every time the website loads.
+ */
+app.get('/tiers', async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT username, mode, ot FROM profiles WHERE ot IS NOT NULL');
+    
+    const tiers = {};
+    const OT_ORDER = ['S', 'A', 'B', 'C', 'D'];
 
-  for (const profile of Object.values(profiles)) {
-    const name = profile.username;
-    for (const [mode, data] of Object.entries(profile.modes)) {
-      if (!data.ot) continue;
-      
-      if (!tiers[mode]) { 
-        tiers[mode] = {}; 
-        OT_ORDER.forEach(t => tiers[mode][t] = []); 
+    rows.forEach(row => {
+      const mode = row.mode;
+      const ot = row.ot;
+
+      if (!tiers[mode]) {
+        tiers[mode] = {};
+        OT_ORDER.forEach(t => tiers[mode][t] = []);
       }
-      if (tiers[mode][data.ot]) {
-        tiers[mode][data.ot].push(name);
+
+      if (tiers[mode][ot]) {
+        tiers[mode][ot].push(row.username);
       }
-    }
+    });
+
+    res.json(tiers);
+  } catch (err) {
+    console.error("Fetch Error:", err);
+    res.status(500).json({ error: "Could not load tiers" });
   }
-  res.json({ tiers, lastUpdated: new Date().toISOString() });
-});
-
-app.get('/', (req, res) => {
-  res.send('RT Tiers API is running ✅');
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API running on port ${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });
