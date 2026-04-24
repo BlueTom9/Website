@@ -12,20 +12,20 @@ const db = new Pool({
 app.use(cors());
 app.use(express.json());
 
-// Initialize Database Table (Now allows multiple kits per user!)
+// FIXED: Added user_id to the table structure
 const initDb = async () => {
   await db.query(`
     CREATE TABLE IF NOT EXISTS profiles (
+      user_id TEXT,
       username TEXT,
       mode TEXT,
       ot TEXT,
-      PRIMARY KEY (username, mode)
+      PRIMARY KEY (user_id, mode)
     )
   `);
 };
 initDb();
 
-// Route: Get Tiers for the Website
 app.get('/tiers', async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM profiles');
@@ -38,25 +38,25 @@ app.get('/tiers', async (req, res) => {
         OT_ORDER.forEach(t => tiers[row.mode][t] = []);
       }
       if (tiers[row.mode][row.ot]) {
+        // We still show the username on the website
         tiers[row.mode][row.ot].push(row.username);
       }
     });
-
     res.json(tiers);
   } catch (err) {
     res.status(500).json({ error: "Database error" });
   }
 });
 
-// Route: Add or Update a Tier
 app.post('/update-profile', async (req, res) => {
-  const { username, mode, ot, secret } = req.body;
+  const { user_id, username, mode, ot, secret } = req.body;
   if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Unauthorized" });
 
   try {
+    // FIXED: Now saves user_id too
     await db.query(
-      'INSERT INTO profiles (username, mode, ot) VALUES ($1, $2, $3) ON CONFLICT (username, mode) DO UPDATE SET ot = $3',
-      [username, mode, ot]
+      'INSERT INTO profiles (user_id, username, mode, ot) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, mode) DO UPDATE SET ot = $4, username = $2',
+      [user_id, username, mode, ot]
     );
     res.json({ success: true });
   } catch (err) {
@@ -65,33 +65,16 @@ app.post('/update-profile', async (req, res) => {
   }
 });
 
-// Route: Delete a Tier (For future bot updates)
-app.post('/delete-profile', async (req, res) => {
-  const { username, mode, secret } = req.body;
-  if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Unauthorized" });
-
-  try {
-    await db.query('DELETE FROM profiles WHERE username = $1 AND mode = $2', [username, mode]);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "Failed to delete" });
-  }
-});
-
-// Route: WIPE DATABASE (Clears the "Ghosts")
+// WIPE ROUTE (Run this once after you update the code!)
 app.get('/wipe-db', async (req, res) => {
-  // Uses a URL query to check your password
-  if (req.query.secret !== process.env.API_SECRET) return res.status(401).send("Unauthorized: Wrong Secret");
-  
+  if (req.query.secret !== process.env.API_SECRET) return res.status(401).send("Unauthorized");
   try {
     await db.query('DROP TABLE IF EXISTS profiles');
     await initDb();
-    res.send("✅ Database wiped completely clean! Go to Discord and run /sync-all to restore active tiers.");
+    res.send("✅ Table reset with the new ID column! Now run /sync-all.");
   } catch (err) {
-    res.status(500).send("Error wiping database.");
+    res.status(500).send("Error");
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
