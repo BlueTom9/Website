@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { Pool } = require('pg'); // Database connection
+const { Pool } = require('pg');
 const app = express();
 
 const db = new Pool({
@@ -11,51 +11,45 @@ const db = new Pool({
 app.use(cors());
 app.use(express.json());
 
-// Initialize the database table to match your bot's fields
+// Initialize table with exact columns sent by your index.js
 const initDb = async () => {
   await db.query(`
     CREATE TABLE IF NOT EXISTS profiles (
       user_id TEXT,
-      mode TEXT,
       username TEXT,
+      mode TEXT,
       ot TEXT,
       jt TEXT,
-      bt TEXT,
-      version TEXT,
       PRIMARY KEY (user_id, mode)
     )
   `);
 };
 initDb();
 
-// 1. YOUR ORIGINAL UPDATE ROUTE (Now saves to Database)
+// POST: Matches the 'fetch' call in your bot's index.js
 app.post('/update-profile', async (req, res) => {
-  const { user_id, userId, username, mode, ot, jt, bt, version, secret } = req.body;
-  
-  // Security check
-  if (secret !== process.env.API_SECRET && req.headers.authorization !== process.env.API_SECRET) {
+  const { userId, username, mode, ot, jt } = req.body;
+  const auth = req.headers.authorization;
+
+  if (auth !== process.env.API_SECRET) {
     return res.status(403).json({ error: "Unauthorized" });
   }
 
-  // Support both 'user_id' and 'userId' naming
-  const finalId = user_id || userId;
-
   try {
     await db.query(
-      `INSERT INTO profiles (user_id, mode, username, ot, jt, bt, version) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) 
+      `INSERT INTO profiles (user_id, username, mode, ot, jt) 
+       VALUES ($1, $2, $3, $4, $5) 
        ON CONFLICT (user_id, mode) 
-       DO UPDATE SET ot = $4, jt = $5, bt = $6, version = $7, username = $3`,
-      [finalId, mode, username, ot, jt, bt, version]
+       DO UPDATE SET ot = $4, jt = $5, username = $2`,
+      [userId, username, mode, ot, jt]
     );
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: "Database error" });
   }
 });
 
-// 2. YOUR ORIGINAL TIERS ROUTE (Now pulls from Database)
+// GET: Matches the format expected by your index.html 'applyData' function
 app.get('/tiers', async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM profiles');
@@ -67,33 +61,30 @@ app.get('/tiers', async (req, res) => {
         tiers[row.mode] = {};
         OT_ORDER.forEach(t => tiers[row.mode][t] = []);
       }
-      
-      // Use whichever tier column the bot filled (ot, jt, or bt)
-      const rank = row.ot || row.jt || row.bt;
-      if (rank && tiers[row.mode][rank]) {
-        tiers[row.mode][rank].push(row.username);
+      // Website specifically checks 'ot' for the tier category
+      if (row.ot && tiers[row.mode][row.ot]) {
+        tiers[row.mode][row.ot].push(row.username);
       }
     });
 
-    res.json({ tiers, lastUpdated: new Date().toISOString() });
+    // Wrapped in "tiers" object to match index.html: const data = json.tiers || json;
+    res.json({ tiers });
   } catch (err) {
     res.status(500).json({ error: "Database error" });
   }
 });
 
-// 3. EMERGENCY RESET (To fix those "does not exist" errors)
+// Reset route to clear old mismatched table structures
 app.get('/wipe-db', async (req, res) => {
   if (req.query.secret !== process.env.API_SECRET) return res.status(401).send("Unauthorized");
   try {
     await db.query('DROP TABLE IF EXISTS profiles');
     await initDb();
-    res.send("✅ Database Reset! Now run /sync-all.");
+    res.send("✅ Database matched to bot and website. Run /sync-all.");
   } catch (err) {
     res.status(500).send("Error");
   }
 });
 
-app.get('/', (req, res) => res.send('RT Tiers API is running ✅'));
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running`));
