@@ -12,14 +12,14 @@ const db = new Pool({
 app.use(cors());
 app.use(express.json());
 
-// Table now uses 'jt' to match your bot's logs
+// We use 'rank' as a universal column for S, A, B, C, D
 const initDb = async () => {
   await db.query(`
     CREATE TABLE IF NOT EXISTS profiles (
       user_id TEXT,
       username TEXT,
       mode TEXT,
-      jt TEXT, 
+      rank TEXT, 
       PRIMARY KEY (user_id, mode)
     )
   `);
@@ -37,9 +37,8 @@ app.get('/tiers', async (req, res) => {
         tiers[row.mode] = {};
         TIER_ORDER.forEach(t => tiers[row.mode][t] = []);
       }
-      // Using row.jt here
-      if (tiers[row.mode][row.jt]) {
-        tiers[row.mode][row.jt].push(row.username);
+      if (tiers[row.mode][row.rank]) {
+        tiers[row.mode][row.rank].push(row.username);
       }
     });
     res.json(tiers);
@@ -49,14 +48,17 @@ app.get('/tiers', async (req, res) => {
 });
 
 app.post('/update-profile', async (req, res) => {
-  const { user_id, username, mode, jt, secret } = req.body;
+  const { user_id, username, mode, secret } = req.body;
+  
+  // This line finds if the bot sent 'ot', 'jt', 'bt', or 'rank'
+  const tierValue = req.body.ot || req.body.jt || req.body.bt || req.body.rank;
+
   if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Unauthorized" });
 
   try {
-    // SQL now uses 'jt' column
     await db.query(
-      'INSERT INTO profiles (user_id, username, mode, jt) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, mode) DO UPDATE SET jt = $4, username = $2',
-      [user_id, username, mode, jt]
+      'INSERT INTO profiles (user_id, username, mode, rank) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, mode) DO UPDATE SET rank = $4, username = $2',
+      [user_id, username, mode, tierValue]
     );
     res.json({ success: true });
   } catch (err) {
@@ -65,13 +67,12 @@ app.post('/update-profile', async (req, res) => {
   }
 });
 
-// WIPE ROUTE
 app.get('/wipe-db', async (req, res) => {
   if (req.query.secret !== process.env.API_SECRET) return res.status(401).send("Unauthorized");
   try {
     await db.query('DROP TABLE IF EXISTS profiles');
     await initDb();
-    res.send("✅ Table reset with 'jt' and 'user_id' columns! Run /sync-all now.");
+    res.send("✅ Database cleaned! All kits (OT, BT, JT) will now work. Run /sync-all.");
   } catch (err) {
     res.status(500).send("Error");
   }
