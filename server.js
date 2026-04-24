@@ -4,35 +4,31 @@ const { Pool } = require('pg');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 1. Connection to your Neon Database
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false // Required for Neon/Render connection
-  }
+  ssl: { rejectUnauthorized: false }
 });
 
 app.use(cors());
 app.use(express.json());
 
-// Initialize Database Table if it doesn't exist
+// Initialize Database Table (Now allows multiple kits per user!)
 const initDb = async () => {
   await db.query(`
     CREATE TABLE IF NOT EXISTS profiles (
-      username TEXT PRIMARY KEY,
+      username TEXT,
       mode TEXT,
-      ot TEXT
+      ot TEXT,
+      PRIMARY KEY (username, mode)
     )
   `);
 };
 initDb();
 
-// 2. Route for the Website to get Tiers
+// Route: Get Tiers for the Website
 app.get('/tiers', async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM profiles');
-    
-    // Format data for your website's frontend
     const tiers = {};
     const OT_ORDER = ['S', 'A', 'B', 'C', 'D'];
 
@@ -48,29 +44,51 @@ app.get('/tiers', async (req, res) => {
 
     res.json(tiers);
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: "Database error" });
   }
 });
 
-// 3. Route for the Discord Bot to update Tiers
+// Route: Add or Update a Tier
 app.post('/update-profile', async (req, res) => {
   const { username, mode, ot, secret } = req.body;
-
-  // Security Check
-  if (secret !== process.env.API_SECRET) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Unauthorized" });
 
   try {
     await db.query(
-      'INSERT INTO profiles (username, mode, ot) VALUES ($1, $2, $3) ON CONFLICT (username) DO UPDATE SET mode = $2, ot = $3',
+      'INSERT INTO profiles (username, mode, ot) VALUES ($1, $2, $3) ON CONFLICT (username, mode) DO UPDATE SET ot = $3',
       [username, mode, ot]
     );
     res.json({ success: true });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to save to database" });
+    res.status(500).json({ error: "Failed to save" });
+  }
+});
+
+// Route: Delete a Tier (For future bot updates)
+app.post('/delete-profile', async (req, res) => {
+  const { username, mode, secret } = req.body;
+  if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Unauthorized" });
+
+  try {
+    await db.query('DELETE FROM profiles WHERE username = $1 AND mode = $2', [username, mode]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete" });
+  }
+});
+
+// Route: WIPE DATABASE (Clears the "Ghosts")
+app.get('/wipe-db', async (req, res) => {
+  // Uses a URL query to check your password
+  if (req.query.secret !== process.env.API_SECRET) return res.status(401).send("Unauthorized: Wrong Secret");
+  
+  try {
+    await db.query('DROP TABLE IF EXISTS profiles');
+    await initDb();
+    res.send("✅ Database wiped completely clean! Go to Discord and run /sync-all to restore active tiers.");
+  } catch (err) {
+    res.status(500).send("Error wiping database.");
   }
 });
 
