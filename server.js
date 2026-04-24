@@ -12,16 +12,14 @@ const db = new Pool({
 app.use(cors());
 app.use(express.json());
 
-// This creates the exact columns your bot is looking for: ot, jt, and bt
+// This creates a 'data' column that accepts EVERYTHING the bot sends
 const initDb = async () => {
   await db.query(`
     CREATE TABLE IF NOT EXISTS profiles (
       user_id TEXT,
-      username TEXT,
       mode TEXT,
-      ot TEXT,
-      jt TEXT,
-      bt TEXT,
+      username TEXT,
+      data JSONB,
       PRIMARY KEY (user_id, mode)
     )
   `);
@@ -40,8 +38,8 @@ app.get('/tiers', async (req, res) => {
         TIER_LIST.forEach(t => tiers[row.mode][t] = []);
       }
       
-      // This checks whichever column has the rank (ot, jt, or bt)
-      const rank = row.ot || row.jt || row.bt;
+      // Look inside the JSON data for ot, jt, or bt
+      const rank = row.data.ot || row.data.jt || row.data.bt;
       if (rank && tiers[row.mode][rank]) {
         tiers[row.mode][rank].push(row.username);
       }
@@ -53,17 +51,17 @@ app.get('/tiers', async (req, res) => {
 });
 
 app.post('/update-profile', async (req, res) => {
-  const { user_id, username, mode, ot, jt, bt, secret } = req.body;
+  const { user_id, username, mode, secret, ...rest } = req.body;
   if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Unauthorized" });
 
   try {
-    // This matches the exact structure your bot is sending
+    // This saves 'user_id', 'mode', 'username', and EVERYTHING else into 'data'
     await db.query(
-      `INSERT INTO profiles (user_id, username, mode, ot, jt, bt) 
-       VALUES ($1, $2, $3, $4, $5, $6) 
+      `INSERT INTO profiles (user_id, mode, username, data) 
+       VALUES ($1, $2, $3, $4) 
        ON CONFLICT (user_id, mode) 
-       DO UPDATE SET ot = $4, jt = $5, bt = $6, username = $2`,
-      [user_id, username, mode, ot, jt, bt]
+       DO UPDATE SET data = $4, username = $3`,
+      [user_id, mode, username, rest]
     );
     res.json({ success: true });
   } catch (err) {
@@ -72,13 +70,12 @@ app.post('/update-profile', async (req, res) => {
   }
 });
 
-// WIPE ROUTE
 app.get('/wipe-db', async (req, res) => {
   if (req.query.secret !== process.env.API_SECRET) return res.status(401).send("Unauthorized");
   try {
     await db.query('DROP TABLE IF EXISTS profiles');
     await initDb();
-    res.send("✅ Database matched to bot! Run /sync-all.");
+    res.send("✅ Database is now UNIVERSAL. It will accept any data the bot sends. Run /sync-all.");
   } catch (err) {
     res.status(500).send("Error");
   }
