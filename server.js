@@ -12,14 +12,14 @@ const db = new Pool({
 app.use(cors());
 app.use(express.json());
 
-// FIXED: Added user_id to the table structure
+// Table now uses 'jt' to match your bot's logs
 const initDb = async () => {
   await db.query(`
     CREATE TABLE IF NOT EXISTS profiles (
       user_id TEXT,
       username TEXT,
       mode TEXT,
-      ot TEXT,
+      jt TEXT, 
       PRIMARY KEY (user_id, mode)
     )
   `);
@@ -30,16 +30,16 @@ app.get('/tiers', async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM profiles');
     const tiers = {};
-    const OT_ORDER = ['S', 'A', 'B', 'C', 'D'];
+    const TIER_ORDER = ['S', 'A', 'B', 'C', 'D'];
 
     rows.forEach(row => {
       if (!tiers[row.mode]) {
         tiers[row.mode] = {};
-        OT_ORDER.forEach(t => tiers[row.mode][t] = []);
+        TIER_ORDER.forEach(t => tiers[row.mode][t] = []);
       }
-      if (tiers[row.mode][row.ot]) {
-        // We still show the username on the website
-        tiers[row.mode][row.ot].push(row.username);
+      // Using row.jt here
+      if (tiers[row.mode][row.jt]) {
+        tiers[row.mode][row.jt].push(row.username);
       }
     });
     res.json(tiers);
@@ -49,14 +49,14 @@ app.get('/tiers', async (req, res) => {
 });
 
 app.post('/update-profile', async (req, res) => {
-  const { user_id, username, mode, ot, secret } = req.body;
+  const { user_id, username, mode, jt, secret } = req.body;
   if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Unauthorized" });
 
   try {
-    // FIXED: Now saves user_id too
+    // SQL now uses 'jt' column
     await db.query(
-      'INSERT INTO profiles (user_id, username, mode, ot) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, mode) DO UPDATE SET ot = $4, username = $2',
-      [user_id, username, mode, ot]
+      'INSERT INTO profiles (user_id, username, mode, jt) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, mode) DO UPDATE SET jt = $4, username = $2',
+      [user_id, username, mode, jt]
     );
     res.json({ success: true });
   } catch (err) {
@@ -65,13 +65,13 @@ app.post('/update-profile', async (req, res) => {
   }
 });
 
-// WIPE ROUTE (Run this once after you update the code!)
+// WIPE ROUTE
 app.get('/wipe-db', async (req, res) => {
   if (req.query.secret !== process.env.API_SECRET) return res.status(401).send("Unauthorized");
   try {
     await db.query('DROP TABLE IF EXISTS profiles');
     await initDb();
-    res.send("✅ Table reset with the new ID column! Now run /sync-all.");
+    res.send("✅ Table reset with 'jt' and 'user_id' columns! Run /sync-all now.");
   } catch (err) {
     res.status(500).send("Error");
   }
