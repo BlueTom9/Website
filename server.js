@@ -12,14 +12,16 @@ const db = new Pool({
 app.use(cors());
 app.use(express.json());
 
-// We use 'rank' as a universal column for S, A, B, C, D
+// This creates the exact columns your bot is looking for: ot, jt, and bt
 const initDb = async () => {
   await db.query(`
     CREATE TABLE IF NOT EXISTS profiles (
       user_id TEXT,
       username TEXT,
       mode TEXT,
-      rank TEXT, 
+      ot TEXT,
+      jt TEXT,
+      bt TEXT,
       PRIMARY KEY (user_id, mode)
     )
   `);
@@ -30,15 +32,18 @@ app.get('/tiers', async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM profiles');
     const tiers = {};
-    const TIER_ORDER = ['S', 'A', 'B', 'C', 'D'];
+    const TIER_LIST = ['S', 'A', 'B', 'C', 'D'];
 
     rows.forEach(row => {
       if (!tiers[row.mode]) {
         tiers[row.mode] = {};
-        TIER_ORDER.forEach(t => tiers[row.mode][t] = []);
+        TIER_LIST.forEach(t => tiers[row.mode][t] = []);
       }
-      if (tiers[row.mode][row.rank]) {
-        tiers[row.mode][row.rank].push(row.username);
+      
+      // This checks whichever column has the rank (ot, jt, or bt)
+      const rank = row.ot || row.jt || row.bt;
+      if (rank && tiers[row.mode][rank]) {
+        tiers[row.mode][rank].push(row.username);
       }
     });
     res.json(tiers);
@@ -48,17 +53,17 @@ app.get('/tiers', async (req, res) => {
 });
 
 app.post('/update-profile', async (req, res) => {
-  const { user_id, username, mode, secret } = req.body;
-  
-  // This line finds if the bot sent 'ot', 'jt', 'bt', or 'rank'
-  const tierValue = req.body.ot || req.body.jt || req.body.bt || req.body.rank;
-
+  const { user_id, username, mode, ot, jt, bt, secret } = req.body;
   if (secret !== process.env.API_SECRET) return res.status(401).json({ error: "Unauthorized" });
 
   try {
+    // This matches the exact structure your bot is sending
     await db.query(
-      'INSERT INTO profiles (user_id, username, mode, rank) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, mode) DO UPDATE SET rank = $4, username = $2',
-      [user_id, username, mode, tierValue]
+      `INSERT INTO profiles (user_id, username, mode, ot, jt, bt) 
+       VALUES ($1, $2, $3, $4, $5, $6) 
+       ON CONFLICT (user_id, mode) 
+       DO UPDATE SET ot = $4, jt = $5, bt = $6, username = $2`,
+      [user_id, username, mode, ot, jt, bt]
     );
     res.json({ success: true });
   } catch (err) {
@@ -67,15 +72,16 @@ app.post('/update-profile', async (req, res) => {
   }
 });
 
+// WIPE ROUTE
 app.get('/wipe-db', async (req, res) => {
   if (req.query.secret !== process.env.API_SECRET) return res.status(401).send("Unauthorized");
   try {
     await db.query('DROP TABLE IF EXISTS profiles');
     await initDb();
-    res.send("✅ Database cleaned! All kits (OT, BT, JT) will now work. Run /sync-all.");
+    res.send("✅ Database matched to bot! Run /sync-all.");
   } catch (err) {
     res.status(500).send("Error");
   }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running`));
